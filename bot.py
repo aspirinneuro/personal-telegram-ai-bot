@@ -2,6 +2,8 @@ import os
 import re
 import subprocess
 import logging
+import threading
+from flask import Flask
 
 from google import genai
 from telegram import Update
@@ -43,6 +45,20 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 pending_push = {}
 
 # =========================
+# FLASK SERVER (Render free tier)
+# =========================
+
+web_app = Flask(__name__)
+
+@web_app.route("/")
+def home():
+    return "Telegram AI Bot Running"
+
+def run_web():
+    port = int(os.environ.get("PORT", 10000))
+    web_app.run(host="0.0.0.0", port=port)
+
+# =========================
 # FILE WRITER
 # =========================
 
@@ -58,7 +74,6 @@ def write_file(project, filename, content):
 
     return file_path
 
-
 # =========================
 # FILE PARSER
 # =========================
@@ -66,6 +81,7 @@ def write_file(project, filename, content):
 def extract_files(text):
 
     pattern = r"FILE:\s*(.*?)\nCODE:\n([\s\S]*?)(?=\nFILE:|$)"
+
     matches = re.findall(pattern, text)
 
     files = []
@@ -74,7 +90,6 @@ def extract_files(text):
         files.append((filename.strip(), code.strip()))
 
     return files
-
 
 # =========================
 # PUSH TO GITHUB
@@ -105,7 +120,6 @@ def push_to_github(project):
         logger.error(e)
         return False
 
-
 # =========================
 # TELEGRAM MESSAGE LIMIT
 # =========================
@@ -117,39 +131,34 @@ async def send_long_message(update, text):
     for i in range(0, len(text), max_length):
         await update.message.reply_text(text[i:i+max_length])
 
-
 # =========================
-# INTENT PROMPT
+# PROMPT BUILDER
 # =========================
 
 def build_prompt(user_text):
 
     return f"""
-You are an AI developer assistant.
+You are an AI coding assistant.
 
 User message:
 {user_text}
 
-Determine intent.
+Determine the intent.
 
 Possible intents:
 
-CHAT → normal conversation  
-CREATE_FILES → user wants code/project files
+CHAT
+CREATE_FILES
 
-Rules:
-
-If chatting:
+If chatting normally return:
 
 INTENT: CHAT
 ANSWER:
 <response>
 
-If user asks for code or project generation:
+If the user asks to generate code or a project return:
 
 INTENT: CREATE_FILES
-
-Return files in this format:
 
 FILE: filename
 CODE:
@@ -162,7 +171,6 @@ CODE:
 print("hello")
 """
 
-
 # =========================
 # MAIN HANDLER
 # =========================
@@ -174,9 +182,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
 
-        # =====================
+        # ======================
         # PUSH CONFIRMATION
-        # =====================
+        # ======================
 
         if user_text.lower() == "yes" and user_id in pending_push:
 
@@ -185,32 +193,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             success = push_to_github(project)
 
             if success:
-                await update.message.reply_text(
-                    f"Project pushed to GitHub successfully: {project}"
-                )
+                await update.message.reply_text("Project pushed to GitHub successfully")
             else:
-                await update.message.reply_text("GitHub push failed.")
+                await update.message.reply_text("GitHub push failed")
 
             del pending_push[user_id]
 
             return
 
-        # =====================
+        # ======================
         # AI RESPONSE
-        # =====================
+        # ======================
 
         prompt = build_prompt(user_text)
 
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-2.0-flash",
             contents=prompt
         )
 
         text = response.text
 
-        # =====================
+        # ======================
         # CHAT RESPONSE
-        # =====================
+        # ======================
 
         if "INTENT: CHAT" in text:
 
@@ -220,9 +226,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             return
 
-        # =====================
+        # ======================
         # FILE GENERATION
-        # =====================
+        # ======================
 
         if "INTENT: CREATE_FILES" in text:
 
@@ -252,7 +258,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             return
 
-        # fallback
         await send_long_message(update, text)
 
     except Exception as e:
@@ -260,7 +265,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(e)
 
         await update.message.reply_text("Something went wrong.")
-
 
 # =========================
 # START BOT
@@ -270,6 +274,9 @@ def main():
 
     logger.info("Starting Telegram AI Bot...")
 
+    # start flask server thread
+    threading.Thread(target=run_web).start()
+
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
@@ -278,7 +285,6 @@ def main():
         drop_pending_updates=True,
         allowed_updates=Update.ALL_TYPES
     )
-
 
 if __name__ == "__main__":
     main()
