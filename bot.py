@@ -1,10 +1,10 @@
 import os
-import requests
 import re
 import subprocess
 import logging
 import threading
 import traceback
+import requests
 from flask import Flask
 
 from google import genai
@@ -30,6 +30,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GITHUB_USERNAME = os.getenv("GITHUB_USERNAME")
+ALLOWED_USER_ID = int(os.getenv("ALLOWED_USER_ID"))
 
 # =========================
 # WORKSPACE
@@ -93,7 +94,7 @@ def extract_files(text):
     return files
 
 # =========================
-# PUSH TO GITHUB
+# GITHUB PUSH
 # =========================
 
 def push_to_github(project):
@@ -102,10 +103,7 @@ def push_to_github(project):
 
     try:
 
-        # ----------------------
-        # CREATE GITHUB REPO
-        # ----------------------
-
+        # Create GitHub repo
         headers = {
             "Authorization": f"token {GITHUB_TOKEN}",
             "Accept": "application/vnd.github+json"
@@ -121,10 +119,6 @@ def push_to_github(project):
             headers=headers,
             json=repo_data
         )
-
-        # ----------------------
-        # INIT LOCAL REPO
-        # ----------------------
 
         subprocess.run(["git", "init"], cwd=path, check=True)
 
@@ -148,10 +142,6 @@ def push_to_github(project):
             check=True
         )
 
-        # ----------------------
-        # ADD REMOTE
-        # ----------------------
-
         repo_url = f"https://{GITHUB_TOKEN}@github.com/{GITHUB_USERNAME}/{project}.git"
 
         subprocess.run(
@@ -173,6 +163,7 @@ def push_to_github(project):
     except Exception as e:
 
         logger.error(e)
+        traceback.print_exc()
 
         return False
 
@@ -188,7 +179,7 @@ async def send_long_message(update, text):
         await update.message.reply_text(text[i:i+max_length])
 
 # =========================
-# PROMPT BUILDER
+# PROMPT
 # =========================
 
 def build_prompt(user_text):
@@ -229,18 +220,23 @@ print("hello world")
 """
 
 # =========================
-# MAIN HANDLER
+# TELEGRAM HANDLER
 # =========================
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    user_text = update.message.text
     user_id = update.message.from_user.id
+
+    # Access restriction
+    if user_id != ALLOWED_USER_ID:
+        await update.message.reply_text("This bot is private.")
+        return
+
+    user_text = update.message.text
 
     try:
 
-        # PUSH CONFIRMATION
-
+        # Push confirmation
         if user_text.lower() == "yes" and user_id in pending_push:
 
             project = pending_push[user_id]
@@ -248,7 +244,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             success = push_to_github(project)
 
             if success:
-                await update.message.reply_text("Project pushed to GitHub successfully")
+                await update.message.reply_text(
+                    f"Project pushed successfully:\nhttps://github.com/{GITHUB_USERNAME}/{project}"
+                )
             else:
                 await update.message.reply_text("GitHub push failed")
 
@@ -264,8 +262,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         text = response.text
 
-        # CHAT RESPONSE
-
+        # Chat response
         if "INTENT: CHAT" in text:
 
             if "ANSWER:" in text:
@@ -276,8 +273,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_long_message(update, answer)
             return
 
-        # FILE GENERATION
-
+        # File generation
         if "INTENT: CREATE_FILES" in text:
 
             files = extract_files(text)
@@ -322,7 +318,6 @@ def main():
 
     logger.info("Starting Telegram AI Bot...")
 
-    # Start Flask server for Render free tier
     threading.Thread(target=run_web).start()
 
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
