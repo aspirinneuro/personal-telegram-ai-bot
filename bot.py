@@ -8,11 +8,11 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 
 # =========================
-# LOGGING (important for Render logs)
+# LOGGING
 # =========================
 
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
 
@@ -28,7 +28,7 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GITHUB_USERNAME = os.getenv("GITHUB_USERNAME")
 
 # =========================
-# WORKSPACE SETUP
+# WORKSPACE
 # =========================
 
 WORKSPACE = "workspace"
@@ -43,7 +43,7 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 pending_push = {}
 
 # =========================
-# UTIL: WRITE FILE
+# FILE WRITER
 # =========================
 
 def write_file(project, filename, content):
@@ -60,7 +60,7 @@ def write_file(project, filename, content):
 
 
 # =========================
-# UTIL: EXTRACT FILES
+# FILE PARSER
 # =========================
 
 def extract_files(text):
@@ -77,7 +77,7 @@ def extract_files(text):
 
 
 # =========================
-# UTIL: PUSH TO GITHUB
+# PUSH TO GITHUB
 # =========================
 
 def push_to_github(project):
@@ -93,6 +93,7 @@ def push_to_github(project):
         repo_url = f"https://{GITHUB_TOKEN}@github.com/{GITHUB_USERNAME}/{project}.git"
 
         subprocess.run(["git", "remote", "add", "origin", repo_url], cwd=path)
+
         subprocess.run(["git", "branch", "-M", "main"], cwd=path)
 
         subprocess.run(["git", "push", "-u", "origin", "main"], cwd=path, check=True)
@@ -106,7 +107,7 @@ def push_to_github(project):
 
 
 # =========================
-# UTIL: TELEGRAM MESSAGE LIMIT
+# TELEGRAM MESSAGE LIMIT
 # =========================
 
 async def send_long_message(update, text):
@@ -114,11 +115,56 @@ async def send_long_message(update, text):
     max_length = 4000
 
     for i in range(0, len(text), max_length):
-        await update.message.reply_text(text[i:i + max_length])
+        await update.message.reply_text(text[i:i+max_length])
 
 
 # =========================
-# MAIN BOT HANDLER
+# INTENT PROMPT
+# =========================
+
+def build_prompt(user_text):
+
+    return f"""
+You are an AI developer assistant.
+
+User message:
+{user_text}
+
+Determine intent.
+
+Possible intents:
+
+CHAT → normal conversation  
+CREATE_FILES → user wants code/project files
+
+Rules:
+
+If chatting:
+
+INTENT: CHAT
+ANSWER:
+<response>
+
+If user asks for code or project generation:
+
+INTENT: CREATE_FILES
+
+Return files in this format:
+
+FILE: filename
+CODE:
+<code>
+
+Example:
+
+FILE: main.py
+CODE:
+print("hello")
+"""
+
+
+# =========================
+# MAIN HANDLER
 # =========================
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -128,7 +174,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
 
-        # -------- PUSH CONFIRMATION --------
+        # =====================
+        # PUSH CONFIRMATION
+        # =====================
 
         if user_text.lower() == "yes" and user_id in pending_push:
 
@@ -144,66 +192,74 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("GitHub push failed.")
 
             del pending_push[user_id]
+
             return
 
-        # -------- GEMINI PROMPT --------
+        # =====================
+        # AI RESPONSE
+        # =====================
 
-        prompt = f"""
-You are an AI coding assistant.
-
-User request:
-{user_text}
-
-Generate project files.
-
-Return ONLY in this format:
-
-FILE: filename
-CODE:
-<code>
-
-Example:
-
-FILE: main.py
-CODE:
-print("hello")
-"""
+        prompt = build_prompt(user_text)
 
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-1.5-flash",
             contents=prompt
         )
 
         text = response.text
 
-        files = extract_files(text)
+        # =====================
+        # CHAT RESPONSE
+        # =====================
 
-        if not files:
+        if "INTENT: CHAT" in text:
 
-            await send_long_message(update, text)
+            answer = text.split("ANSWER:")[1].strip()
+
+            await send_long_message(update, answer)
+
             return
 
-        project = "ai_project"
+        # =====================
+        # FILE GENERATION
+        # =====================
 
-        created_files = []
+        if "INTENT: CREATE_FILES" in text:
 
-        for filename, code in files:
+            files = extract_files(text)
 
-            path = write_file(project, filename, code)
-            created_files.append(path)
+            if not files:
+                await send_long_message(update, text)
+                return
 
-        pending_push[user_id] = project
+            project = "ai_project"
 
-        file_list = "\n".join(created_files)
+            created = []
 
-        await update.message.reply_text(
-            f"Files generated:\n\n{file_list}\n\nReply YES to push to GitHub."
-        )
+            for filename, code in files:
+
+                path = write_file(project, filename, code)
+
+                created.append(path)
+
+            pending_push[user_id] = project
+
+            await update.message.reply_text(
+                "Files generated:\n\n"
+                + "\n".join(created)
+                + "\n\nReply YES to push to GitHub."
+            )
+
+            return
+
+        # fallback
+        await send_long_message(update, text)
 
     except Exception as e:
 
         logger.error(e)
-        await update.message.reply_text("An error occurred.")
+
+        await update.message.reply_text("Something went wrong.")
 
 
 # =========================
