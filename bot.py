@@ -1,4 +1,5 @@
 import os
+import requests
 import re
 import subprocess
 import logging
@@ -101,9 +102,32 @@ def push_to_github(project):
 
     try:
 
+        # ----------------------
+        # CREATE GITHUB REPO
+        # ----------------------
+
+        headers = {
+            "Authorization": f"token {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github+json"
+        }
+
+        repo_data = {
+            "name": project,
+            "private": False
+        }
+
+        requests.post(
+            "https://api.github.com/user/repos",
+            headers=headers,
+            json=repo_data
+        )
+
+        # ----------------------
+        # INIT LOCAL REPO
+        # ----------------------
+
         subprocess.run(["git", "init"], cwd=path, check=True)
 
-        # Configure Git identity
         subprocess.run(
             ["git", "config", "user.email", "bot@telegram.ai"],
             cwd=path,
@@ -124,9 +148,17 @@ def push_to_github(project):
             check=True
         )
 
+        # ----------------------
+        # ADD REMOTE
+        # ----------------------
+
         repo_url = f"https://{GITHUB_TOKEN}@github.com/{GITHUB_USERNAME}/{project}.git"
 
-        subprocess.run(["git", "remote", "add", "origin", repo_url], cwd=path)
+        subprocess.run(
+            ["git", "remote", "add", "origin", repo_url],
+            cwd=path,
+            check=True
+        )
 
         subprocess.run(["git", "branch", "-M", "main"], cwd=path)
 
@@ -141,7 +173,6 @@ def push_to_github(project):
     except Exception as e:
 
         logger.error(e)
-        traceback.print_exc()
 
         return False
 
