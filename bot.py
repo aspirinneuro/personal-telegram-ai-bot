@@ -3,6 +3,7 @@ import re
 import subprocess
 import logging
 import threading
+import traceback
 from flask import Flask
 
 from google import genai
@@ -108,9 +109,7 @@ def push_to_github(project):
         repo_url = f"https://{GITHUB_TOKEN}@github.com/{GITHUB_USERNAME}/{project}.git"
 
         subprocess.run(["git", "remote", "add", "origin", repo_url], cwd=path)
-
         subprocess.run(["git", "branch", "-M", "main"], cwd=path)
-
         subprocess.run(["git", "push", "-u", "origin", "main"], cwd=path, check=True)
 
         return True
@@ -143,23 +142,23 @@ You are an AI coding assistant.
 User message:
 {user_text}
 
-Determine the intent.
+Determine intent.
 
 Possible intents:
 
 CHAT
 CREATE_FILES
 
-If chatting normally return:
+Respond STRICTLY in one of these formats.
+
+For normal chat:
 
 INTENT: CHAT
-ANSWER:
-<response>
+ANSWER: <response>
 
-If the user asks to generate code or a project return:
+For code generation:
 
 INTENT: CREATE_FILES
-
 FILE: filename
 CODE:
 <code>
@@ -168,7 +167,7 @@ Example:
 
 FILE: main.py
 CODE:
-print("hello")
+print("hello world")
 """
 
 # =========================
@@ -182,9 +181,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
 
-        # ======================
         # PUSH CONFIRMATION
-        # ======================
 
         if user_text.lower() == "yes" and user_id in pending_push:
 
@@ -198,12 +195,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("GitHub push failed")
 
             del pending_push[user_id]
-
             return
 
-        # ======================
         # AI RESPONSE
-        # ======================
 
         prompt = build_prompt(user_text)
 
@@ -214,21 +208,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         text = response.text
 
-        # ======================
         # CHAT RESPONSE
-        # ======================
 
         if "INTENT: CHAT" in text:
 
-            answer = text.split("ANSWER:")[1].strip()
+            if "ANSWER:" in text:
+                answer = text.split("ANSWER:",1)[1].strip()
+            else:
+                answer = text
 
             await send_long_message(update, answer)
-
             return
 
-        # ======================
         # FILE GENERATION
-        # ======================
 
         if "INTENT: CREATE_FILES" in text:
 
@@ -245,7 +237,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for filename, code in files:
 
                 path = write_file(project, filename, code)
-
                 created.append(path)
 
             pending_push[user_id] = project
@@ -262,7 +253,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
 
-        logger.error(e)
+        traceback.print_exc()
+        logger.error(str(e))
 
         await update.message.reply_text("Something went wrong.")
 
@@ -274,7 +266,7 @@ def main():
 
     logger.info("Starting Telegram AI Bot...")
 
-    # start flask server thread
+    # start flask server for Render free tier
     threading.Thread(target=run_web).start()
 
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
