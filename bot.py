@@ -82,7 +82,6 @@ def write_file(project, filename, content):
 def extract_files(text):
 
     pattern = r"FILE:\s*(.*?)\nCODE:\n([\s\S]*?)(?=\nFILE:|$)"
-
     matches = re.findall(pattern, text)
 
     files = []
@@ -103,20 +102,47 @@ def push_to_github(project):
     try:
 
         subprocess.run(["git", "init"], cwd=path, check=True)
+
+        # Configure Git identity
+        subprocess.run(
+            ["git", "config", "user.email", "bot@telegram.ai"],
+            cwd=path,
+            check=True
+        )
+
+        subprocess.run(
+            ["git", "config", "user.name", "Telegram AI Bot"],
+            cwd=path,
+            check=True
+        )
+
         subprocess.run(["git", "add", "."], cwd=path, check=True)
-        subprocess.run(["git", "commit", "-m", "AI generated project"], cwd=path, check=True)
+
+        subprocess.run(
+            ["git", "commit", "-m", "AI generated project"],
+            cwd=path,
+            check=True
+        )
 
         repo_url = f"https://{GITHUB_TOKEN}@github.com/{GITHUB_USERNAME}/{project}.git"
 
         subprocess.run(["git", "remote", "add", "origin", repo_url], cwd=path)
+
         subprocess.run(["git", "branch", "-M", "main"], cwd=path)
-        subprocess.run(["git", "push", "-u", "origin", "main"], cwd=path, check=True)
+
+        subprocess.run(
+            ["git", "push", "-u", "origin", "main"],
+            cwd=path,
+            check=True
+        )
 
         return True
 
     except Exception as e:
 
         logger.error(e)
+        traceback.print_exc()
+
         return False
 
 # =========================
@@ -149,9 +175,9 @@ Possible intents:
 CHAT
 CREATE_FILES
 
-Respond STRICTLY in one of these formats.
+Respond ONLY in one of these formats.
 
-For normal chat:
+For chat:
 
 INTENT: CHAT
 ANSWER: <response>
@@ -159,6 +185,7 @@ ANSWER: <response>
 For code generation:
 
 INTENT: CREATE_FILES
+
 FILE: filename
 CODE:
 <code>
@@ -196,8 +223,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             del pending_push[user_id]
             return
-
-        # AI RESPONSE
 
         prompt = build_prompt(user_text)
 
@@ -266,7 +291,7 @@ def main():
 
     logger.info("Starting Telegram AI Bot...")
 
-    # start flask server for Render free tier
+    # Start Flask server for Render free tier
     threading.Thread(target=run_web).start()
 
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
